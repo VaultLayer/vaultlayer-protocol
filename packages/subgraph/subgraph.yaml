@@ -1,0 +1,41 @@
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: NFTLendAuctionV1
+    network: core
+    source:
+      address: "0x4953D0e96D13b9802361102837f16F844a135EAb"  # Replace with the actual contract address
+      abi: NFTLendAuctionV1
+      startBlock: 21102600 # Change me
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      entities:
+        - Loan
+        - User
+      abis:
+        - name: NFTLendAuctionV1
+          file: ./abis/NFTLendAuctionV1.json
+      eventHandlers:
+        - event: LoanListed(indexed uint256,indexed address,address,uint256,uint256,uint256,uint256,uint8)
+          handler: handleLoanListed
+        - event: LoanDelisted(indexed uint256,indexed address)
+          handler: handleLoanDelisted
+        - event: LoanBidPlaced(indexed uint256,indexed address,uint256)
+          handler: handleLoanBidPlaced
+        - event: LoanAccepted(indexed uint256,indexed address,indexed address,uint256)
+          handler: handleLoanAccepted
+        - event: LoanRepaid(indexed uint256,indexed address,uint256)
+          handler: handleLoanRepaid
+        - event: LoanDefaulted(indexed uint256,indexed address)
+          handler: handleLoanDefaulted
+        - event: LoanBidCancelled(indexed uint256,indexed address)
+          handler: handleLoanBidCancelled
+        - event: PendingWithdrawalAdded(indexed address,uint256)
+          handler: handlePendingWithdrawalAdded
+        - event: FundsWithdrawn(indexed address,uint256,indexed address)
+          handler: handleFundsWithdrawn
+      file: ./src/mapping.ts

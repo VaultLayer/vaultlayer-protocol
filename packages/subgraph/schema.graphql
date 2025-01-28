@@ -1,0 +1,23 @@
+type Loan @entity {
+  id: ID!                      # Unique Loan ID
+  borrower: User!              # Borrower's address
+  lender: User                 # Lender's address
+  nftAddress: Bytes!           # NFT contract address
+  tokenId: BigInt!             # NFT Token ID
+  loanAmount: BigDecimal!      # Loan amount in ETH
+  maxInterestRate: BigDecimal! # Maximum interest rate (bps)
+  currentInterestRate: BigDecimal! # Current interest rate
+  duration: BigInt!            # Loan duration in seconds
+  startTime: BigInt            # Start time in seconds
+  isAccepted: Boolean!         # Whether the loan is accepted
+  status: String!              # Loan status: "New", "Pending", "Accepted"
+  loanType: String! # "FIXED" or "APR"
+}
+
+type User @entity {
+  id: ID!                      # Wallet address
+  loansBorrowed: [Loan!]! @derivedFrom(field: "borrower")
+  loansLended: [Loan!]! @derivedFrom(field: "lender")
+  totalWithdrawn: BigDecimal!
+  pendingWithdraw: BigDecimal!
+}
