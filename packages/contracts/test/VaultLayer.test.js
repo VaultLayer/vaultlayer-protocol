@@ -66,24 +66,24 @@ describe("VaultLayer Contract", function () {
 
   it("Should deposit CORE with locktime", async function () {
     const depositAmount = ethers.utils.parseEther("1");
-  
+
     // Deposit 1 CORE into the vault
     await vaultLayer.connect(addr1).depositCORE({ value: depositAmount });
-    
+
     // Retrieve the share balance of addr1
     const shareBalance = await vaultLayer.balanceOf(addr1.address);
     console.log("vlCORE share Balance:", shareBalance.toString());
-    
+
     // Calculate the expected shares from the deposit amount.
     // For the initial deposit, convertToShares should return the correct share amount.
     const expectedShares = await vaultLayer.convertToShares(depositAmount);
-  
+
     // For a deposit of 1 CORE and with minCollateralRatio set to 200:
     //   overCollateralizedAssets = (1e18 * 100) / 200 = 5e17
     //   getPricePerShare() returns 1e18 for the first deposit.
     // So, convertToShares returns (5e17 * 1e18) / 1e18 = 5e17, i.e. 500000000000000000.
     const calclatedShares = ethers.BigNumber.from("500000000000000000");
-    
+
     expect(shareBalance).to.equal(calclatedShares);
     expect(shareBalance).to.equal(expectedShares);
   });
@@ -160,30 +160,30 @@ describe("VaultLayer Contract", function () {
     const memoryTx = "0x" + rawTx;
     // 1 BTC in satoshis
     const btcAmount = ethers.utils.parseUnits("1", 8);
-  
+
     // This is the valid script that is contained in rawTx (as used in other tests)
     const validScript = "0x04bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac";
     // An invalid script that is not present in rawTx
     const invalidScript = "0xdeadbeef";
-  
+
     // Prepare the mock BitcoinStake with the raw transaction:
     await bitcoinStake.addBtcTx(memoryTx, btcAmount, 0, 1738589119, 0);
     await bitcoinStake.addReceipt(memoryTx, vaultLayer.address, 0);
-  
+
     // (1) Try to record the BTC stake with an invalid script.
     await expect(
       vaultLayer.recordBTCStake(memoryTx, btcAmount, invalidScript)
     ).to.be.revertedWith("BTC transaction does not include provided script");
-  
+
     // (2) Record the BTC stake using the valid script. This should succeed.
     await vaultLayer.recordBTCStake(memoryTx, btcAmount, validScript);
-  
+
     // (3) Try to record the same BTC stake again.
     await expect(
       vaultLayer.recordBTCStake(memoryTx, btcAmount, validScript)
     ).to.be.revertedWith("BTC stake already recorded");
   });
-  
+
   it("Should claim BTC rewards", async function () {
     const rawTx = "0200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd8880200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000";
     const memoryTx = '0x' + rawTx;
@@ -332,8 +332,9 @@ describe("VaultLayer Contract", function () {
     const rawTx =
       "0200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd8880200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000";
     const script = "0x04bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac";
+    const pubKey = ethers.utils.hexlify("0x3187b3627e6e80c7911ef627a8589ccc51aa8cd8");
 
-    // ----- Round 1: Proper ratio deposit (0.1 BTC : 800 CORE) -----
+    console.log(" ----- Round 1: Proper ratio deposit (0.1 BTC : 800 CORE) -----");
     const memoryTx1 = "0x" + rawTx;
     const txId = calculateTxId(rawTx);
     const btcAmount1 = ethers.utils.parseUnits("0.1", 8); // 0.1 BTC (in satoshis)
@@ -341,29 +342,68 @@ describe("VaultLayer Contract", function () {
     await bitcoinStake.addBtcTx(memoryTx1, btcAmount1, 0, 1738589119, 0);
     await bitcoinStake.addReceipt(memoryTx1, vaultLayer.address, 1);
     await vaultLayer.recordBTCStake(memoryTx1, btcAmount1, script);
+
+    //before any CORE deposit, totalAssets should be 0 and pricePerShare should be 1e18.
+    let pricePerShare = await vaultLayer.getPricePerShare();
+    expect(pricePerShare).to.equal(ethers.BigNumber.from("1000000000000000000"));
+    let totalAssets = await vaultLayer.totalAssets();
+    expect(totalAssets).to.equal(0);
+
     // addr1 deposits exactly 800 CORE
     await vaultLayer.connect(addr1).depositCORE({ value: ethers.utils.parseEther("800") });
+    // After deposit, totalAssets should equal the deposit
+    totalAssets = await vaultLayer.totalAssets();
+    expect(totalAssets).to.equal(ethers.utils.parseEther("800"));
+    let totalSupply = await vaultLayer.totalSupply();
+    console.log("After addr1 CORE deposit, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    // For the first deposit, getPricePerShare should still be ~1e18.
+    pricePerShare = await vaultLayer.getPricePerShare();
+    expect(pricePerShare).to.equal(ethers.BigNumber.from("1000000000000000000"));
+
     // Stake the required CORE via CoreAgent (800 CORE)
     await vaultLayer.stakeCORE(addr2.address, ethers.utils.parseEther("800"));
-    expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseEther("800"));
+    let totalCoreStaked = await vaultLayer.totalCoreStaked();
+    expect(totalCoreStaked).to.equal(ethers.utils.parseEther("800"));
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("Round 1, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
 
     await stakeHub.setRound(1);
     await stakeHub.addReward(ethers.utils.parseEther("10")); // scaled-down reward
     await vaultLayer.claimCoreRewards();
+
+    // After rewards are claimed, check:
+    // - totalAssets should now be increased by the net reward distribution
+    totalAssets = await vaultLayer.totalAssets();
+    console.log("After Round 1, totalAssets of CORE:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 1, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    // - getPricePerShare() increase due to rewards
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 1, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    // - Check pending rewards accrued for the BTC stake.
+    let btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 1, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
     const totalBTCStaked1 = await vaultLayer.totalBTCStaked();
     const totalCoreDeposits1 = await vaultLayer.totalCoreDeposits();
-    console.log("After Round 1, total BTC staked:", totalBTCStaked1.toString(),
-      "total CORE Deposits:", totalCoreDeposits1.toString());
+    console.log("After Round 1, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked1, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits1, 18));
     const updatedBtcRewardRatio1 = await vaultLayer.btcRewardRatio();
     const updatedCoreRewardRatio1 = await vaultLayer.coreRewardRatio();
     console.log("After Round 1, BTC Reward Ratio:", updatedBtcRewardRatio1.toString(),
       ", CORE Reward Ratio:", updatedCoreRewardRatio1.toString());
-    
+    let protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 1, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
+    console.log("##################################################");
 
-    // ----- Round 2: Excess CORE deposit relative to BTC -----
+    console.log(" ----- Round 2: Excess 2000 CORE deposit relative to BTC -----");
     // Now, addr2 deposits an additional 2000 CORE, so totalCoreDeposits becomes 800 + 2000 = 2800 CORE.
     await vaultLayer.connect(addr2).depositCORE({ value: ethers.utils.parseEther("2000") });
-    
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("Round 2, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("Round 2, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("Round 2, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
     // Attempt to stake extra CORE; contract logic should only stake as needed (still 800 total)
     await vaultLayer.stakeCORE(addr2.address, ethers.utils.parseEther("2000"));
     expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseEther("800"));
@@ -372,17 +412,28 @@ describe("VaultLayer Contract", function () {
     await stakeHub.setRound(2);
     await stakeHub.addReward(ethers.utils.parseEther("5"));
     await vaultLayer.claimCoreRewards();
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 2, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 2, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("After Round 2, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 2, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
     const totalBTCStaked2 = await vaultLayer.totalBTCStaked();
     const totalCoreDeposits2 = await vaultLayer.totalCoreDeposits();
-    console.log("After Round 2, total BTC staked:", totalBTCStaked2.toString(),
-      "total CORE Deposits:", totalCoreDeposits2.toString());
+    console.log("After Round 2, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked2, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits2, 18));
     const updatedBtcRewardRatio2 = await vaultLayer.btcRewardRatio();
     const updatedCoreRewardRatio2 = await vaultLayer.coreRewardRatio();
     console.log("After Round 2, BTC Reward Ratio:", updatedBtcRewardRatio2.toString(),
       ", CORE Reward Ratio:", updatedCoreRewardRatio2.toString());
+    protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 2, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
+    console.log("##################################################");
 
 
-    // ----- Round 3: Additional BTC stake (another 0.1 BTC) -----
+    console.log(" ----- Round 3: Excess BTC stake (another 0.5 BTC) -----");
     // Reuse the provided rawTx and script
     const rawTx3 = "02000000016074790d4f21516b182f1542023b90d938e91640fb473908ae1c23321d0fcb980200000000ffffffff031027000000000000220020b55aaa01a70f4ccc4772507463bde55155e4e3abed874d7d18161ea4f6588b730000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c00047352a167b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac7a780000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000";
     const script3 = "0x047352a167b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac";
@@ -392,42 +443,50 @@ describe("VaultLayer Contract", function () {
     await bitcoinStake.addReceipt(memoryTx3, vaultLayer.address, 3);
     await vaultLayer.recordBTCStake(memoryTx3, btcAmount3, script3);
 
-    // With totalBTCStaked now 0.2 BTC, the required CORE becomes 1600.
-    // Before staking, deposit additional CORE so that the vault's balance is sufficient.
-    await vaultLayer.connect(addr2).depositCORE({ value: ethers.utils.parseEther("600") });
-    // Now total CORE deposited = 800 (addr1) + 200 (Round 2, addr2) + 600 (Round 3, addr2) = 1600
-
-    // Stake an additional 800 CORE so that total staked CORE becomes 1600.
-    await vaultLayer.stakeCORE(addr2.address, ethers.utils.parseEther("800"));
-    expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseEther("1600"));
+    // Stake half the CORE we had from before
+    await vaultLayer.stakeCORE(addr2.address, ethers.utils.parseEther("1000"));
+    expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseEther("1800"));
 
     await stakeHub.setRound(3);
     await stakeHub.addReward(ethers.utils.parseEther("8"));
     await vaultLayer.claimCoreRewards();
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 3, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 3, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("After Round 3, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 3, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
     const totalBTCStaked3 = await vaultLayer.totalBTCStaked();
     const totalCoreDeposits3 = await vaultLayer.totalCoreDeposits();
-    console.log("After Round 3, total BTC staked:", totalBTCStaked3.toString(),
-      "total CORE Deposits:", totalCoreDeposits3.toString());
+    console.log("After Round 3, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked3, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits3, 18));
     const updatedBtcRewardRatio3 = await vaultLayer.btcRewardRatio();
     const updatedCoreRewardRatio3 = await vaultLayer.coreRewardRatio();
     console.log("After Round 3, BTC Reward Ratio:", updatedBtcRewardRatio3.toString(),
       ", CORE Reward Ratio:", updatedCoreRewardRatio3.toString());
+    protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 3, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
+    console.log("##################################################");
 
-    // ----- Round 4: Expire the first BTC stake -----
+    console.log(" ----- Round 4: Expire the first BTC stake -----");
     // Retrieve the current block timestamp and calculate the offset so that:
     //   block.timestamp > depositTime + 1738589119
     const currentBlock = await ethers.provider.getBlock("latest");
     const depositTime = currentBlock.timestamp;
-    console.log("Current block timestamp:", depositTime);
+    //console.log("Current block timestamp:", depositTime);
 
     // Print the stored values for the first BTC stake (using its txId)
     const btcTxRecord = await vaultLayer.btcTxMap(txId);
+    /*
     console.log("BtcTxMap for txId:", txId);
-    console.log("Amount:", btcTxRecord.amount.toString());
+    console.log("Amount:", ethers.utils.formatUnits(btcTxRecord.amount, 18));
     console.log("LockTime:", btcTxRecord.lockTime.toString());
     console.log("DepositTime:", btcTxRecord.depositTime.toString());
     console.log("EndRound:", btcTxRecord.endRound.toString());
     console.log("PubKey:", btcTxRecord.pubKey);
+    */
     // Set the target timestamp to a value between the two lockTimes.
     const targetTimestamp = 1738600000; // between 1738589119 and 1738625651
     // Calculate the offset needed to reach the target timestamp.
@@ -435,9 +494,9 @@ describe("VaultLayer Contract", function () {
     await ethers.provider.send("evm_increaseTime", [offset]);
     await ethers.provider.send("evm_mine");
     const newBlock = await ethers.provider.getBlock("latest");
-    console.log("New block timestamp after increase:", newBlock.timestamp);
+    //console.log("New block timestamp after increase:", newBlock.timestamp);
     await stakeHub.setRound(4);
-    await stakeHub.addReward(ethers.utils.parseEther("2"));
+    await stakeHub.addReward(ethers.utils.parseEther("20"));
     const txClaim4 = await vaultLayer.claimCoreRewards();
     const receiptClaim4 = await txClaim4.wait();
     let expiredRemoved = false;
@@ -448,36 +507,107 @@ describe("VaultLayer Contract", function () {
       }
     }
     expect(expiredRemoved).to.equal(true);
-    // After expiration, only the second BTC stake (0.1 BTC) should remain.
+    // After expiration, only the second BTC stake (0.5 BTC) should remain.
     const totalBTCAfter = await vaultLayer.totalBTCStaked();
     expect(totalBTCAfter).to.equal(btcAmount3);
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 4, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 4, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("After Round 4, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 4, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
     const totalBTCStaked4 = await vaultLayer.totalBTCStaked();
     const totalCoreDeposits4 = await vaultLayer.totalCoreDeposits();
-    console.log("After Round 4, total BTC staked:", totalBTCStaked4.toString(),
-      "total CORE Deposits:", totalCoreDeposits4.toString());
+    console.log("After Round 4, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked4, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits4, 18));
     const updatedBtcRewardRatio4 = await vaultLayer.btcRewardRatio();
     const updatedCoreRewardRatio4 = await vaultLayer.coreRewardRatio();
     console.log("After Round 4, BTC Reward Ratio:", updatedBtcRewardRatio4.toString(),
       ", CORE Reward Ratio:", updatedCoreRewardRatio4.toString());
+    protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 4, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
+    console.log("##################################################");
 
-    // ----- Round 5: Liquidity provider withdraws CORE (vault shares burned) -----
-    const sharesAddr1 = await vaultLayer.balanceOf(addr1.address);
+    console.log(" ----- Round 5: Liquidity provider withdraws CORE (vault shares burned) -----");
+    let sharesAddr1 = await vaultLayer.balanceOf(addr1.address);
+    console.log("Round 5, addr1 vlCORE shares balance:", ethers.utils.formatUnits(sharesAddr1, 18));
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("Round 5, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("Round 5, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("Round 5, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
     const initialBalanceAddr1 = await ethers.provider.getBalance(addr1.address);
     const txWithdraw = await vaultLayer.connect(addr1).withdrawCORE(sharesAddr1);
     await txWithdraw.wait();
     expect(await vaultLayer.balanceOf(addr1.address)).to.equal(0);
     const finalBalanceAddr1 = await ethers.provider.getBalance(addr1.address);
-    console.log("After Round 5, addr1 balance increased: ", finalBalanceAddr1.sub(initialBalanceAddr1).toString());
-    
+    console.log("After Round 5, addr1 balance increased: ", ethers.utils.formatUnits(finalBalanceAddr1.sub(initialBalanceAddr1), 18));
+
     await stakeHub.setRound(5);
-    const txClaim5 = await vaultLayer.claimCoreRewards();      
+    const txClaim5 = await vaultLayer.claimCoreRewards();
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 5, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 5, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("After Round 5, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 5, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
     const totalBTCStaked5 = await vaultLayer.totalBTCStaked();
     const totalCoreDeposits5 = await vaultLayer.totalCoreDeposits();
-    console.log("After Round 5, total BTC staked:", totalBTCStaked5.toString(),
-      "total CORE Deposits:", totalCoreDeposits5.toString());
+    console.log("After Round 5, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked5, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits5, 18));
     const updatedBtcRewardRatio5 = await vaultLayer.btcRewardRatio();
     const updatedCoreRewardRatio5 = await vaultLayer.coreRewardRatio();
     console.log("After Round 5, BTC Reward Ratio:", updatedBtcRewardRatio5.toString(),
       ", CORE Reward Ratio:", updatedCoreRewardRatio5.toString());
+    protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 5, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
+    console.log("##################################################");
+
+    console.log(" ----- Round 6: BTC rewards are claimed -----");
+    sharesAddr1 = await vaultLayer.balanceOf(addr1.address);
+    console.log("Round 6, addr1 vlCORE shares balance:", ethers.utils.formatUnits(sharesAddr1, 18));
+
+    const ethPubKey = "0x045cea681f98a4e06d2d06678daf45e9e73eca6e3f85383c3bc35401eef2c1fe80ff05cec2452562123aff9fe8d8e53d863be580403239c8fc2aebbdd1882281a5";
+    const signature = "0xb762cbd42521deacb8fe3263d0a8eeac2d5005f5b434b4dc2681bbb20e3dfb3a3044e242013a056862642bcc3e18da02b94590cc592f340ddf476b0e6d4b49cc1c";
+    const recipient = "0x0f21A1d7b8c0927851E8a80d16a473416421f657".toLowerCase();
+    const message = 'recipient: ';
+    const fullMessage = `${message}${recipient}`;
+    const prefixedMessage = `\x19Ethereum Signed Message:\n${fullMessage.length}${fullMessage}`;
+    const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(prefixedMessage));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("Round 6, btcStake pendingRewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
+    let balanceBefore = await vaultLayer.balanceOf(recipient);
+    console.log("Round 6, recipient balanceBefore:", ethers.utils.formatUnits(balanceBefore, 18));
+    await vaultLayer.claimBTCRewards(ethers.utils.arrayify(ethPubKey), ethers.utils.arrayify(signature), message, recipient);
+    let balanceAfter = await vaultLayer.balanceOf(recipient);
+    console.log("Round 6, recipient balanceAfter:", ethers.utils.formatUnits(balanceAfter, 18));
+
+    await stakeHub.setRound(6);
+    await stakeHub.addReward(ethers.utils.parseEther("10"));
+    await vaultLayer.claimCoreRewards();
+
+    totalAssets = await vaultLayer.totalAssets();
+    pricePerShare = await vaultLayer.getPricePerShare();
+    console.log("After Round 6, totalAssets:", ethers.utils.formatUnits(totalAssets, 18));
+    totalSupply = await vaultLayer.totalSupply();
+    console.log("After Round 6, totalSupply of vlCORE:", ethers.utils.formatUnits(totalSupply, 18));
+    console.log("After Round 6, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
+    btcStake = await vaultLayer.btcStakes(pubKey);
+    console.log("After Round 6, pending BTC rewards:", ethers.utils.formatUnits(btcStake.pendingRewards, 18));
+    const totalBTCStaked6 = await vaultLayer.totalBTCStaked();
+    const totalCoreDeposits6 = await vaultLayer.totalCoreDeposits();
+    console.log("After Round 6, total BTC staked:", ethers.utils.formatUnits(totalBTCStaked6, 8),
+      "total CORE Deposits:", ethers.utils.formatUnits(totalCoreDeposits6, 18));
+    const updatedBtcRewardRatio6 = await vaultLayer.btcRewardRatio();
+    const updatedCoreRewardRatio6 = await vaultLayer.coreRewardRatio();
+    console.log("After Round 6, BTC Reward Ratio:", updatedBtcRewardRatio6.toString(),
+      ", CORE Reward Ratio:", updatedCoreRewardRatio6.toString());
+    protocolFees = await vaultLayer.pendingProtocolFees();
+    console.log("After Round 6, protocolFees:", ethers.utils.formatUnits(protocolFees, 18));
   });
 });
