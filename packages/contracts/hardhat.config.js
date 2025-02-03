@@ -12,6 +12,7 @@ module.exports = {
    networks: {
       hardhat: {
         chainId: 1337, // Local Hardhat network
+        initialDate: "2023-07-01T00:00:00.000Z", // For our BTC staking tests
         accounts: {
           count: 10, // Number of accounts to generate
           accountsBalance: "10000000000000000000000" // Each account starts with 10,000 ETH

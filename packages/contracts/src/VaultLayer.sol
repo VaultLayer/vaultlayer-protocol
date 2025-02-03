@@ -31,15 +31,36 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
 
     // Roles
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
 
     // Vault parameters
+    uint256 constant MIN_BTC_STAKED = 1e5;   // minimal BTC stake (e.g. 0.001 BTC)
+    uint256 constant MIN_CORE_STAKED = 1e20;  // minimal CORE stake (e.g. 100 CORE in wei)
     uint256 public constant BTC_TO_CORE_RATIO_FOR_MAX_YIELD = 8000; // 1 BTC : 8,000 CORE -> Max Tier Ratio
     uint256 public btcPriceInCore = 60000; // 1 BTC = 60K $CORE
     uint256 public minCollateralRatio = 200; // 200% over-collateralization
-    uint256 public btcRewardRatio = 50;
-    uint256 public coreRewardRatio = 50;
+    uint256 public btcRewardRatio = 5000;
+    uint256 public coreRewardRatio = 5000;
     uint256 public interestRate = 500; // 5% Interest on withdrawals
     uint256 public platformFee = 500; // Platform fee in basis points (5%)
+
+    // Fixed-point scaling factor
+    uint256 public constant SCALE = 1e18;
+    // The ideal (target) human BTC/CORE ratio, expressed in fixed-point.
+    // Ideal human ratio = 1 / BTC_TO_CORE_RATIO_FOR_MAX_YIELD.
+    // Thus, TARGET_RATIO = SCALE / BTC_TO_CORE_RATIO_FOR_MAX_YIELD.
+    uint256 public targetRatio = 1e8 / BTC_TO_CORE_RATIO_FOR_MAX_YIELD;
+
+    // Grade structure: each grade defines a deviation interval (D in fixed-point)
+    // and the corresponding BTC reward ratio (in basis points).
+    struct Grade {
+        uint256 lowerBound; // inclusive, e.g., 0
+        uint256 upperBound; // exclusive, e.g., 0.7e18 for grade 0
+        uint256 btcRewardRatio; // in basis points (0 to 10000)
+    }
+    // We'll use exactly 5 grades.
+    Grade[5] public grades;
+
 
     // the current round, it is updated in setNewRound.
     uint256 public roundTag;
@@ -64,7 +85,6 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     uint256 public totalBTCStaked; 
     
     // CORE Liquidity Providers
-    mapping(address => uint256) public coreDeposits;
     mapping(address => uint256) public coreDepositRound; // Tracks the round of each deposit
     uint256 public totalCoreDeposits; 
     uint256 public totalCoreStaked; // Track CORE staked
@@ -79,6 +99,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     event ExpiredStakeRemoved(bytes32 indexed txId, bytes20 indexed pubKey, uint256 amount);
     event BTCDelegationTransferred(bytes32 indexed txId, address indexed targetCandidate);
     event COREStakeTransferred(address indexed sourceCandidate, address indexed targetCandidate, uint256 amount);
+    event GradeUpdated(uint256 index, uint256 lowerBound, uint256 upperBound, uint256 btcRewardRatio);
 
 
 
@@ -88,6 +109,41 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         coreAgent = _coreAgent;
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
+        _grantRole(ORACLE_ROLE, msg.sender);
+
+        // Set up 5 default grades.
+        // All bounds are in fixed-point (SCALE = 1e18) deviation factor D = (currentRatio/targetRatio).
+        // In an ideal state, D = 1e18.
+        grades[0] = Grade(0, 100, 8000);
+        grades[1] = Grade(100, 500, 6500);
+        grades[2] = Grade(500, 1400, 5000);
+        grades[3] = Grade(1400, 10000, 4500);
+        grades[4] = Grade(10000, 10000000, 2000);
+    }
+
+    /// @notice Allows the oracle to update one of the 5 grades.
+    /// @param index The grade index (0 to 4).
+    /// @param lowerBound The inclusive lower bound of D (scaled by SCALE).
+    /// @param upperBound The exclusive upper bound of D (scaled by SCALE).
+    /// @param btcRewardRatio The desired BTC reward ratio (basis points).
+    function setGrade(
+        uint256 index,
+        uint256 lowerBound,
+        uint256 upperBound,
+        uint256 btcRewardRatio
+    ) external onlyRole(ORACLE_ROLE) {
+        require(index < 5, "Index must be 0-4");
+        require(upperBound > lowerBound, "Upper bound must exceed lower");
+        require(btcRewardRatio <= 10000, "Cannot exceed 10000");
+        grades[index] = Grade(lowerBound, upperBound, btcRewardRatio);
+        emit GradeUpdated(index, lowerBound, upperBound, btcRewardRatio);
+    }
+
+    /// @notice Allows the oracle to update the targetRatio.
+    /// @param newTargetRatio The new target ratio (in fixed-point, SCALE=1e18). This is the ideal human ratio.
+    function setTargetRatio(uint256 newTargetRatio) external onlyRole(ORACLE_ROLE) {
+        require(newTargetRatio > 0, "Target must be positive");
+        targetRatio = newTargetRatio;
     }
 
     /*** ERC-4626-Like Methods ***/
@@ -119,17 +175,10 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         return totalSupply() == 0 ? 1e18 : (collateralizedAssets * 1e18) / totalSupply();
     }
 
-    /// Start new round, this is called by the Oracle Agent
-    /// @param round The new round tag
-    function setNewRound(uint256 round) external onlyRole(ADMIN_ROLE) {
-        roundTag = round;
-    }
-
     // Deposit CORE
     function depositCORE() external payable nonReentrant {
         require(msg.value > 0, "Invalid amount");
 
-        coreDeposits[msg.sender] += msg.value;
         coreDepositRound[msg.sender] = roundTag; // Track the deposit round
         totalCoreDeposits += msg.value;
 
@@ -137,7 +186,6 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         _mint(msg.sender, shares);  // Ensure shares are minted properly
 
         emit COREDeposited(msg.sender, msg.value, roundTag);
-        _rebalanceRewardRatio();
     }
 
     // Withdraw CORE liquidity
@@ -149,15 +197,16 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         require(assets <= address(this).balance, "Insufficient vault balance");
 
         uint256 reward = (assets * coreRewardRatio) / (100 * totalCoreDeposits); // Pro-rata rewards based on total deposits
+        if (reward > pendingCoreRewards) {
+            reward = pendingCoreRewards;
+        }
         pendingCoreRewards -= reward;
         uint256 payout = assets + reward;
 
-        coreDeposits[msg.sender] -= assets;
         totalCoreDeposits -= assets;
         _burn(msg.sender, shares);
 
         payable(msg.sender).transfer(payout);
-        _rebalanceRewardRatio();
     }
 
 
@@ -166,6 +215,11 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         require(btcAmount > 0, "Invalid BTC amount");
 
         bytes32 txId = BitcoinHelper.calculateTxId(btcTx);
+        // Ensure that the txId is not already recorded.
+        require(btcTxMap[txId].amount == 0, "BTC stake already recorded");
+
+        // Check that the provided btcTx contains the script bytes.
+        require(BitcoinHelper.bytesContains(btcTx, script), "BTC transaction does not include provided script");
 
         // Verify txId exists on BitcoinStake contract
         (uint64 amount,, uint64 blockTimestamp, uint32 lockTime,) = bitcoinStake.btcTxMap(txId);
@@ -178,6 +232,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         uint256 endRound = round + (lockTime / 1 days);
 
         (uint256 scriptLockTime, bytes20 pubKey) = BitcoinHelper.extractBitcoinAddress(script);
+        require(lockTime == scriptLockTime, "BTC tx lockTime != scriptLockTime");
         btcTxMap[txId] = BtcTx(btcAmount, scriptLockTime, blockTimestamp, endRound, pubKey);
         btcTxIds.push(txId); // Track txId for iteration
 
@@ -185,24 +240,22 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         totalBTCStaked += btcAmount;
 
         emit BTCStaked(txId, pubKey, btcAmount, endRound);
-        _rebalanceRewardRatio();
     }
 
-    // Claim Rewards with Proof-of-Ownership
+
+    // Claim Rewards with Proof-of-Ownership of the same PubKey used for ETH and BTC address derivation
     function claimBTCRewards(
-        bytes20 pubKey, // BTC pubPeky Hash
-        bytes memory ethPubKey
+        bytes memory ethPubKey,
         bytes memory signature,
         string memory message,
         address recipient
     ) external {
-        bytes20 btcPubKeyHash = BitcoinHelper.convertEthToBtcPubKeyHash(ethPubKey);
-        require(pubKey == btcPubKeyHash, "Invalid pubKey");
-
         require(BitcoinHelper.verifyEthPubKeySignature(message, signature, ethPubKey, recipient), "Invalid signature");
         
-        BtcStake storage stake = btcStakes[pubKey];
-        require(stake.stakedAmount > 0, "No staked BTC");
+        bytes20 btcPubKeyHash = BitcoinHelper.convertEthToBtcPubKeyHash(ethPubKey);
+
+        BtcStake storage stake = btcStakes[btcPubKeyHash];
+        require(stake.stakedAmount > 0, "No staked BTC for btcPubKeyHash");
 
         uint256 reward = stake.pendingRewards;
         require(reward > 0, "No pending rewards");
@@ -212,9 +265,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
 
         uint256 rewardWithCollateral = reward * 100 / minCollateralRatio;
         _mint(recipient, rewardWithCollateral);
-        emit RewardsClaimed(pubKey, rewardWithCollateral);
-
-        _rebalanceRewardRatio();
+        emit RewardsClaimed(btcPubKeyHash, rewardWithCollateral);
     }
 
     // Stake CORE tokens into CoreAgent
@@ -226,14 +277,12 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         require(stakeAmount <= address(this).balance, "Insufficient funds to stake");
         coreAgent.delegateCoin{value: stakeAmount}(validator, stakeAmount);
         totalCoreStaked += stakeAmount;
-        _rebalanceRewardRatio();
     }
 
     // Unstake CORE tokens from CoreAgent
     function unstakeCORE(address validator, uint256 amount) external onlyRole(ADMIN_ROLE) {
         coreAgent.undelegateCoin(validator, amount);
         totalCoreStaked -= amount;
-        _rebalanceRewardRatio();
     }
 
     // Transfer BTC delegation
@@ -272,23 +321,25 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
             uint256 netReward = totalReward - fee;
 
             // Distribute BTC rewards
-            for (uint256 i = 0; i < btcTxIds.length; i++) {
-                bytes32 txId = btcTxIds[i];
+            for (uint256 i = btcTxIds.length; i > 0; i--) {
+                uint256 index = i - 1; // Safe because i > 0
+                bytes32 txId = btcTxIds[index];
                 BtcTx storage bt = btcTxMap[txId];
-                uint256 btcReward = ((netReward * btcRewardRatio) / 100) * bt.amount / totalBTCStaked;
+                uint256 btcReward = ((netReward * btcRewardRatio) / 10000) * bt.amount / totalBTCStaked;
                 btcStakes[bt.pubKey].pendingRewards += btcReward;
 
-                if (block.timestamp > bt.depositTime + bt.lockTime) {                    
-                    // Remove expired txId
-                    btcTxIds[i] = btcTxIds[btcTxIds.length - 1];
+                if (block.timestamp > bt.lockTime) {
+                    // Remove expired txId: update totalBTCStaked first
+                    totalBTCStaked -= bt.amount;                    
+                    // Remove expired txId by swapping with the last element and popping
+                    btcTxIds[index] = btcTxIds[btcTxIds.length - 1];
                     btcTxIds.pop();
-                    i--; // Adjust loop after removal
                     emit ExpiredStakeRemoved(txId, bt.pubKey, bt.amount);
                 }
             }
 
             // Distribute CORE rewards
-            pendingCoreRewards += (netReward * coreRewardRatio) / 100;
+            pendingCoreRewards += (netReward * coreRewardRatio) / 10000;
         }
 
         _rebalanceRewardRatio();
@@ -298,42 +349,50 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     }
 
 
-    // Dynamic Rebalancing
+    // Dynamic Rebalancing     
+    // We compute the deviation factor D = currentRatio / TARGET_RATIO.
+    // currentRatio = (totalBTCStaked/1e8) / (totalCoreDeposits/1e18) = (totalBTCStaked * 1e18) / (totalCoreDeposits * 1e8)
+    // D is dimensionless; we represent it in fixed-point (i.e. scaled by SCALE).
     function _rebalanceRewardRatio() internal {
-        uint256 targetRatio = 1e18 / 8000;
-
-        // Prevent division by zero errors
-        uint256 btcStaked = totalBTCStaked > 0 ? totalBTCStaked : 1;
-        uint256 coreStaked = totalCoreStaked > 0 ? totalCoreStaked : 1;
-
-        uint256 currentRatio = (btcStaked * 1e18) / coreStaked; // Scale for precision
-        uint256 ratioDeviation = (currentRatio * 1e18) / targetRatio; // Scale for precision
-
-        uint256 newBtcRewardRatio;
-        uint256 newCoreRewardRatio;
-
-        if (ratioDeviation > 1e18) { // Too much BTC relative to CORE
-            uint256 adjustmentFactor = ratioDeviation / 1e18;
-            newBtcRewardRatio = (btcRewardRatio * 1e18) / adjustmentFactor; // Scale down BTC
-        } else { // Too much CORE relative to BTC
-            uint256 adjustmentFactor = (1e18 * 1e18) / ratioDeviation;
-            newBtcRewardRatio = (btcRewardRatio * adjustmentFactor) / 1e18; // Scale up BTC
+        if (totalBTCStaked < MIN_BTC_STAKED) {
+            btcRewardRatio = 0;
+            coreRewardRatio = 10000;
+            emit Rebalanced(btcRewardRatio, coreRewardRatio);
+            return;
         }
-
-        // Ensure the ratios stay within bounds
-        if (newBtcRewardRatio > 10000) {
-            newBtcRewardRatio = 10000;
+        if (totalCoreDeposits < MIN_CORE_STAKED) {
+            btcRewardRatio = 10000;
+            coreRewardRatio = 0;
+            emit Rebalanced(btcRewardRatio, coreRewardRatio);
+            return;
         }
-        if (newBtcRewardRatio < 0) {
-            newBtcRewardRatio = 0;
+        
+        // Compute the current ratio in fixed-point:
+        uint256 currentRatio = (totalBTCStaked * SCALE) / (totalCoreDeposits);
+        // Compute the deviation factor D = currentRatio / targetRatio.
+        // Since both currentRatio and targetRatio are in fixed-point,
+        // we compute D_fixed = (currentRatio * SCALE) / targetRatio.
+        uint256 D_fixed = (currentRatio * 1000) / targetRatio;
+        // In an ideal case D_fixed == SCALE (i.e. 1e18).
+        
+        // Now, using our fixed 5-grade table, determine the applicable BTC reward ratio.
+        // The grades are defined in terms of D_fixed.
+        // For example, if the oracle set:
+        // Grade 0: D in [0, 0.7e18) → btcRewardRatio = 6500.
+        // Grade 1: D in [0.7e18, 0.9e18) → btcRewardRatio = 5500.
+        // Grade 2: D in [0.9e18, 1.1e18) → btcRewardRatio = 5000.
+        // Grade 3: D in [1.1e18, 1.3e18) → btcRewardRatio = 2500.
+        // Grade 4: D in [1.3e18, ∞) → btcRewardRatio = 2000.
+        uint256 newBtcRewardRatio = 5000; // default
+        for (uint256 i = 0; i < 5; i++) {
+            if (D_fixed >= grades[i].lowerBound && D_fixed < grades[i].upperBound) {
+                newBtcRewardRatio = grades[i].btcRewardRatio;
+                break;
+            }
         }
-
-        newCoreRewardRatio = 10000 - newBtcRewardRatio; // Ensure total ratio sums to 100%
-
-        // Update reward ratios safely
+        
         btcRewardRatio = newBtcRewardRatio;
-        coreRewardRatio = newCoreRewardRatio;
-
+        coreRewardRatio = 10000 - newBtcRewardRatio;
         emit Rebalanced(btcRewardRatio, coreRewardRatio);
     }
 
