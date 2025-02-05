@@ -37,18 +37,18 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     uint256 constant MIN_BTC_STAKED = 1e5;   // minimal BTC stake (e.g. 0.001 BTC)
     uint256 constant MIN_CORE_STAKED = 1e20;  // minimal CORE stake (e.g. 100 CORE in wei)
     uint256 public btcPriceInCore = 60000; // 1 BTC = 60K $CORE
-    uint256 public minCollateralRatio = 200; // 200% over-collateralization
     uint256 public btcRewardRatio = 5000;
     uint256 public coreRewardRatio = 5000;
     uint256 public interestRate = 500; // 5% Interest on withdrawals
     uint256 public platformFee = 500; // Platform fee in basis points (5%)
+    uint256 public reserveRatio = 200;
 
     // Fixed-point scaling factor
     uint256 public constant BTC_DECIMALS = 1e8;
     uint256 public constant CORE_DECIMALS = 1e18;
     
     // The ideal (target) human BTC/CORE ratio, expressed in fixed-point.
-    // BTC_TO_CORE_RATIO_FOR_MAX_YIELD = 1 BTC / 8000 CORE
+    // BTC_TO_CORE_RATIO_FOR_MAX_YIELD = 1 BTC / 8000 CORE (But 2x : 1/16000)
     uint256 public targetRatio = BTC_DECIMALS / 8000;
 
     // Grade structure: each grade defines a deviation interval (D in fixed-point)
@@ -86,6 +86,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     
     // CORE Liquidity Providers
     mapping(address => uint256) public coreDepositRound; // Tracks the round of each deposit
+    mapping(address => uint256) public lastClaimed;
     uint256 public totalCoreDeposits; 
     uint256 public totalCoreStaked; // Track CORE staked
     uint256 public pendingCoreRewards;
@@ -97,7 +98,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     event BTCStaked(bytes32 indexed txId, bytes20 indexed pubKey, uint256 amount, uint256 endRound);
     event COREDeposited(address indexed user, uint256 amount, uint256 round);
     event RewardsDistributed(bytes32 indexed txId, uint256 btcReward, address indexed user, uint256 coreReward);
-    event RewardsClaimed(bytes20 indexed pubKey, uint256 reward);
+    event BTCRewardsClaimed(bytes20 indexed pubKey, uint256 reward);
+    event RewardsClaimed(address indexed user, uint256 reward);
     event Rebalanced(uint256 btcRewardRatio, uint256 coreRewardRatio);
     event ExpiredStakeRemoved(bytes32 indexed txId, bytes20 indexed pubKey, uint256 amount);
     event BTCDelegationTransferred(bytes32 indexed txId, address indexed targetCandidate);
@@ -154,13 +156,11 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     }
 
     function convertToShares(uint256 assets) public view returns (uint256) {
-        uint256 overCollateralizedAssets = (assets * 100) / minCollateralRatio;
-        return (overCollateralizedAssets * CORE_DECIMALS) / getPricePerShare();
+        return (assets * CORE_DECIMALS) / getPricePerShare();
     }
 
     function convertToAssets(uint256 shares) public view returns (uint256) {
-        uint256 assets = (shares * getPricePerShare()) / CORE_DECIMALS;
-        return (assets * minCollateralRatio) / 100; // Adjust for over-collateralization
+        return (shares * getPricePerShare()) / CORE_DECIMALS;
     }
 
     function maxDeposit(address) public pure returns (uint256) {
@@ -172,8 +172,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     }
 
     function getPricePerShare() public view returns (uint256) {
-        uint256 collateralizedAssets = (totalAssets() * 100) / minCollateralRatio;
-        return totalSupply() == 0 ? CORE_DECIMALS : (collateralizedAssets * CORE_DECIMALS) / totalSupply();
+        return totalSupply() == 0 ? CORE_DECIMALS : (totalAssets() * CORE_DECIMALS) / totalSupply();
     }
 
     // Deposit CORE
@@ -189,26 +188,42 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         emit COREDeposited(msg.sender, msg.value, roundTag);
     }
 
+    function _claimRewards() internal {
+        if(roundTag > lastClaimed[msg.sender]){
+            lastClaimed[msg.sender] = roundTag;
+            uint256 totalShares = balanceOf(msg.sender);
+            uint256 assets = convertToAssets(totalShares);
+            uint256 reward = (assets * pendingCoreRewards) / (totalCoreDeposits); // Pro-rata rewards based on total deposits
+            if(reward > 0 && reward <= pendingCoreRewards){
+                pendingCoreRewards -= reward;
+                _mint(msg.sender, reward);
+                emit RewardsClaimed(msg.sender, reward);
+            }
+        }
+    }
+
+    function claimRewards() external nonReentrant {
+        _claimRewards();
+    }
+
     // Withdraw CORE liquidity
     function withdrawCORE(uint256 shares) external nonReentrant {
         require(shares > 0 && shares <= balanceOf(msg.sender), "Invalid shares");
         require(roundTag > coreDepositRound[msg.sender], "Withdrawal locked for this round"); // Enforce 1 full round lock
 
+        // claim any pending rewards
+        _claimRewards();
+
         uint256 assets = convertToAssets(shares);
         require(assets <= address(this).balance, "Insufficient vault balance");
-
-        uint256 reward = (assets * coreRewardRatio) / (100 * totalCoreDeposits); // Pro-rata rewards based on total deposits
-        if (reward > pendingCoreRewards) {
-            reward = pendingCoreRewards;
-        }
-        pendingCoreRewards -= reward;
-        uint256 payout = assets + reward;
 
         totalCoreDeposits -= assets;
         _burn(msg.sender, shares);
 
-        payable(msg.sender).transfer(payout);
+        payable(msg.sender).transfer(assets);
     }
+
+
 
 
     // 1. We Record BTC Stake linked to a BTC Public Key and BTC txid
@@ -265,9 +280,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         stake.pendingRewards = 0;
         pendingBTCRewards -= reward;
 
-        uint256 rewardWithCollateral = reward * 100 / minCollateralRatio;
-        _mint(recipient, rewardWithCollateral);
-        emit RewardsClaimed(btcPubKeyHash, rewardWithCollateral);
+        _mint(recipient, reward);
+        emit BTCRewardsClaimed(btcPubKeyHash, reward);
     }
 
     // Stake CORE tokens into CoreAgent
@@ -372,7 +386,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         // Compute the current ratio in fixed-point:
         uint256 currentRatio = (totalBTCStaked * CORE_DECIMALS) / (totalCoreDeposits);
         // Compute the deviation factor D = currentRatio / targetRatio.
-        uint256 D_fixed = (currentRatio * 1000) / targetRatio;
+        uint256 D_fixed = (currentRatio * 1000) / ( targetRatio * 100 / reserveRatio);
         
         // Now, using our fixed 5-grade table, determine the applicable BTC reward ratio.
         // The grades are defined in terms of D_fixed.
