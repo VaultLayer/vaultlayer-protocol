@@ -37,7 +37,7 @@ library BitcoinHelper {
             compressedKey[i + 1] = ethPubKey[i + 1]; 
         }
 
-        return compresssBtcPubKey(compressedKey);
+        return compressBtcPubKey(compressedKey);
     }
 
     function recoverEthereumSigner(bytes32 messageHash, bytes memory signature) public pure returns (address) {
@@ -186,7 +186,7 @@ library BitcoinHelper {
 
 
     // Hash the provided uncompressed public key using SHA-256, then RIPEMD-160
-    function compresssBtcPubKey(
+    function compressBtcPubKey(
         bytes memory compressedPubKey
     ) public pure returns (bytes20) {    
         bytes32 sha256Hash = sha256(compressedPubKey);

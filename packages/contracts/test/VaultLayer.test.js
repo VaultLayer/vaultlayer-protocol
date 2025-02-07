@@ -127,7 +127,7 @@ describe("VaultLayer Contract", function () {
     const storedTx = await bitcoinStake.btcTxMap(txId);
     console.log("Mock stored BTC amount:", storedTx.amount.toString());
 
-    const tx = await vaultLayer.recordBTCStake(memoryTx, btcAmount, script);
+    const tx = await vaultLayer.recordBTCStake(memoryTx, script);
     const receipt = await tx.wait();
 
     // Find the event in the logs
@@ -171,15 +171,15 @@ describe("VaultLayer Contract", function () {
 
     // (1) Try to record the BTC stake with an invalid script.
     await expect(
-      vaultLayer.recordBTCStake(memoryTx, btcAmount, invalidScript)
+      vaultLayer.recordBTCStake(memoryTx, invalidScript)
     ).to.be.revertedWith("BTC transaction does not include provided script");
 
     // (2) Record the BTC stake using the valid script. This should succeed.
-    await vaultLayer.recordBTCStake(memoryTx, btcAmount, validScript);
+    await vaultLayer.recordBTCStake(memoryTx, validScript);
 
     // (3) Try to record the same BTC stake again.
     await expect(
-      vaultLayer.recordBTCStake(memoryTx, btcAmount, validScript)
+      vaultLayer.recordBTCStake(memoryTx, validScript)
     ).to.be.revertedWith("BTC stake already recorded");
   });
 
@@ -193,7 +193,7 @@ describe("VaultLayer Contract", function () {
     await bitcoinStake.addBtcTx(memoryTx, btcAmount, 0, 1738589119, 0);
     await bitcoinStake.addReceipt(memoryTx, vaultLayer.address, 0);
 
-    const tx = await vaultLayer.recordBTCStake(memoryTx, btcAmount, script);
+    const tx = await vaultLayer.recordBTCStake(memoryTx, script);
     const receipt = await tx.wait();
     // Find the event in the logs
     const event = receipt.events?.find(e => e.event === "BTCStaked");
@@ -305,7 +305,7 @@ describe("VaultLayer Contract", function () {
     await bitcoinStake.addReceipt(memoryTx, vaultLayer.address, 0);
 
     const storedTx = await bitcoinStake.btcTxMap(txId);
-    await vaultLayer.recordBTCStake(memoryTx, btcAmount, script);
+    await vaultLayer.recordBTCStake(memoryTx, script);
 
     const validator = addr2.address;
 
@@ -329,7 +329,7 @@ describe("VaultLayer Contract", function () {
     await bitcoinStake.addReceipt(memoryTx, vaultLayer.address, 0);
 
     const storedTx = await bitcoinStake.btcTxMap(txId);
-    await vaultLayer.recordBTCStake(memoryTx, btcAmount, script);
+    await vaultLayer.recordBTCStake(memoryTx, script);
 
     const validator = addr2.address;
 
@@ -379,7 +379,7 @@ describe("VaultLayer Contract", function () {
     // Use addBtcTx with dummy parameters; recordBTCStake will use the provided script to extract lockTime=1738589119.
     await bitcoinStake.addBtcTx(memoryTx1, btcAmount1, 0, 1738589119, 0);
     await bitcoinStake.addReceipt(memoryTx1, vaultLayer.address, 1);
-    await vaultLayer.recordBTCStake(memoryTx1, btcAmount1, script);
+    await vaultLayer.recordBTCStake(memoryTx1, script);
 
     //before any CORE deposit, totalAssets should be 0 and pricePerShare should be 1e18.
     let pricePerShare = await vaultLayer.getPricePerShare();
@@ -487,7 +487,7 @@ describe("VaultLayer Contract", function () {
     const btcAmount3 = ethers.utils.parseUnits("0.6", 8);
     await bitcoinStake.addBtcTx(memoryTx3, btcAmount3, 0, 1738625651, 0);
     await bitcoinStake.addReceipt(memoryTx3, vaultLayer.address, 3);
-    await vaultLayer.recordBTCStake(memoryTx3, btcAmount3, script3);
+    await vaultLayer.recordBTCStake(memoryTx3, script3);
 
     // Stake half the CORE we had from before
     await vaultLayer.stakeCORE(addr2.address, ethers.utils.parseEther("1000"));

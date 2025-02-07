@@ -4,6 +4,8 @@ pragma solidity ^0.8.23;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 import "./BitcoinHelper.sol"; 
 
 interface IStakeHub {
@@ -49,7 +51,9 @@ interface ICoreAgent {
     function transferCoin(address sourceCandidate, address targetCandidate, uint256 amount) external;
 }
 
-contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
+contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
+    using Address for address payable;
+
     // CoreDAO Staking Hub Contract
     IStakeHub public immutable stakeHub;
     IBitcoinStake public immutable bitcoinStake;
@@ -57,7 +61,6 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
 
     // Roles
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
 
     // Vault parameters
     uint256 constant MIN_BTC_STAKED = 1e5;   // minimal BTC stake (e.g. 0.001 BTC)
@@ -133,7 +136,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     event BTCDelegationTransferred(bytes32 indexed txId, address indexed targetCandidate);
     event COREStakeTransferred(address indexed sourceCandidate, address indexed targetCandidate, uint256 amount);
     event GradeUpdated(uint256 index, uint256 lowerBound, uint256 upperBound, uint256 btcRewardRatio);
-
+    event PlatformFeeUpdated(uint256 newFee);
+    event ReserveRatioUpdated(uint256 newRatio);    
 
     constructor(IStakeHub _stakeHub, IBitcoinStake _bitcoinStake, ICoreAgent _coreAgent) ERC20("VaultLayer CORE Shares", "vlCORE") {
         stakeHub = _stakeHub;
@@ -141,7 +145,6 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         coreAgent = _coreAgent;
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
-        _grantRole(ORACLE_ROLE, msg.sender);
 
         // Set up 5 default grades.
         // All bounds are in a deviation factor of currentRatio/targetRatio.
@@ -152,7 +155,20 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         grades[4] = Grade(10000, 10000000, 2000);
     }
 
-    /// @notice Allows the oracle to update one of the 5 grades.
+    // Governance parameter setters
+    function setPlatformFee(uint256 newFee) external onlyRole(ADMIN_ROLE) {
+        require(newFee <= 10000, "Fee too high");
+        platformFee = newFee;
+        emit PlatformFeeUpdated(newFee);
+    }
+
+    function setReserveRatio(uint256 newRatio) external onlyRole(ADMIN_ROLE) {
+        require(newRatio > 0, "Reserve ratio must be > 0");
+        reserveRatio = newRatio;
+        emit ReserveRatioUpdated(newRatio);
+    }
+
+    /// @notice Allows the gov to update one of the 5 grades.
     /// @param index The grade index (0 to 4).
     /// @param lowerBound The inclusive lower bound of D 
     /// @param upperBound The exclusive upper bound of D 
@@ -162,7 +178,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         uint256 lowerBound,
         uint256 upperBound,
         uint256 btcRewardRatio
-    ) external onlyRole(ORACLE_ROLE) {
+    ) external onlyRole(ADMIN_ROLE) {
         require(index < 5, "Index must be 0-4");
         require(upperBound > lowerBound, "Upper bound must exceed lower");
         require(btcRewardRatio <= 10000, "Cannot exceed 10000");
@@ -170,11 +186,19 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         emit GradeUpdated(index, lowerBound, upperBound, btcRewardRatio);
     }
 
-    /// @notice Allows the oracle to update the targetRatio.
+    /// @notice Allows the gov to update the targetRatio.
     /// @param newTargetRatio The new target ratio. This is the ideal human ratio.
-    function setTargetRatio(uint256 newTargetRatio) external onlyRole(ORACLE_ROLE) {
+    function setTargetRatio(uint256 newTargetRatio) external onlyRole(ADMIN_ROLE) {
         require(newTargetRatio > 0, "Target must be positive");
         targetRatio = newTargetRatio;
+    }
+
+    // Pausable functions.
+    function pause() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+    function unpause() external onlyRole(ADMIN_ROLE) {
+        _unpause();
     }
 
     /*** ERC-4626-Like Methods ***/
@@ -204,7 +228,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     }
 
     // Deposit CORE
-    function depositCORE() external payable nonReentrant {
+    function depositCORE() external payable nonReentrant whenNotPaused {
         require(msg.value > 0, "Invalid amount");
         uint256 shares = convertToShares(msg.value);
         
@@ -230,21 +254,19 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         }
     }
 
-    function claimRewards() external nonReentrant {
+    function claimRewards() external nonReentrant whenNotPaused {
         _claimRewards();
     }
 
 
     // 1. We Record BTC Stake linked to a BTC Public Key and BTC txid
-    function recordBTCStake(bytes calldata btcTx, uint256 btcAmount, bytes memory script) external nonReentrant onlyRole(ADMIN_ROLE) {
-        require(btcAmount > 0, "Invalid BTC amount");
+    function recordBTCStake(bytes calldata btcTx, bytes memory script) external nonReentrant onlyRole(ADMIN_ROLE) {
+        // Check that the provided btcTx contains the script bytes.
+        require(BitcoinHelper.bytesContains(btcTx, script), "BTC transaction does not include provided script");
 
         bytes32 txId = BitcoinHelper.calculateTxId(btcTx);
         // Ensure that the txId is not already recorded.
         require(btcTxMap[txId].amount == 0, "BTC stake already recorded");
-
-        // Check that the provided btcTx contains the script bytes.
-        require(BitcoinHelper.bytesContains(btcTx, script), "BTC transaction does not include provided script");
 
         // Verify txId exists on BitcoinStake contract
         (uint64 amount,, uint64 blockTimestamp, uint32 lockTime,) = bitcoinStake.btcTxMap(txId);
@@ -258,13 +280,13 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
 
         (uint256 scriptLockTime, bytes20 pubKey) = BitcoinHelper.extractBitcoinAddress(script);
         require(lockTime == scriptLockTime, "BTC tx lockTime != scriptLockTime");
-        btcTxMap[txId] = BtcTx(btcAmount, scriptLockTime, blockTimestamp, endRound, pubKey);
+        btcTxMap[txId] = BtcTx(amount, scriptLockTime, blockTimestamp, endRound, pubKey);
         btcTxIds.push(txId); // Track txId for iteration
 
-        btcStakes[pubKey].stakedAmount += btcAmount;
-        totalBTCStaked += btcAmount;
+        btcStakes[pubKey].stakedAmount += amount;
+        totalBTCStaked += amount;
 
-        emit BTCStaked(txId, pubKey, btcAmount, endRound);
+        emit BTCStaked(txId, pubKey, amount, endRound);
     }
 
 
@@ -274,7 +296,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         bytes memory signature,
         string memory message,
         address recipient
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         require(BitcoinHelper.verifyEthPubKeySignature(message, signature, ethPubKey, recipient), "Invalid signature");
         
         bytes20 btcPubKeyHash = BitcoinHelper.convertEthToBtcPubKeyHash(ethPubKey);
@@ -334,7 +356,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         totalCoreDeposits -= assets;
         _burn(msg.sender, shares);
 
-        payable(msg.sender).transfer(assets);
+        payable(msg.sender).sendValue(assets);
     }
 
     function unstakeCORE(uint256 amount) external nonReentrant onlyRole(ADMIN_ROLE) {
