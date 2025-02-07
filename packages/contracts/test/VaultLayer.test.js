@@ -314,7 +314,46 @@ describe("VaultLayer Contract", function () {
     await vaultLayer.stakeCORE(validator, ethers.utils.parseEther("1000"));
     expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseUnits("800", 18));
 
-    await vaultLayer.unstakeCORE(validator, ethers.utils.parseUnits("800", 18));
+    await vaultLayer.unstakeCORE(ethers.utils.parseUnits("800", 18));
+    expect(await vaultLayer.totalCoreStaked()).to.equal(0);
+  });
+
+  it("Should trigger unstaking via withdrawCORE when vault funds are insufficient", async function () {
+    const rawTx = "0200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd8880200000001b4bc7b1410c36d8e5919280b771ea7143cd33b8f4a7f5aa87ca8bfda06ca8a0d0200000000ffffffff031027000000000000220020631c19fc18fc13e12120a83c92dc303c17ce0bc09d93c5c51e1e5e238276973c0000000000000000536a4c505341542b01045a0f21a1d7b8c0927851e8a80d16a473416421f657de442f5ba55687a24f04419424e0dc2593cc9f4c0004bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000ac80a00000000000001600143187b3627e6e80c7911ef627a8589ccc51aa8cd800000000";
+    const memoryTx = '0x' + rawTx;
+    const txId = calculateTxId(rawTx);
+    const btcAmount = ethers.utils.parseUnits("0.1", 8); // BTC in sats
+    const script = "0x04bfc3a067b17576a9143187b3627e6e80c7911ef627a8589ccc51aa8cd888ac";
+
+    await bitcoinStake.addBtcTx(memoryTx, btcAmount, 0, 1738589119, 0);
+    await bitcoinStake.addReceipt(memoryTx, vaultLayer.address, 0);
+
+    const storedTx = await bitcoinStake.btcTxMap(txId);
+    await vaultLayer.recordBTCStake(memoryTx, btcAmount, script);
+
+    const validator = addr2.address;
+
+    await vaultLayer.connect(addr1).depositCORE({ value: ethers.utils.parseEther("1000") });
+
+    await vaultLayer.stakeCORE(validator, ethers.utils.parseEther("1000"));
+    expect(await vaultLayer.totalCoreStaked()).to.equal(ethers.utils.parseUnits("800", 18));
+
+    await stakeHub.setRound(1);
+    // Claim the core rewards
+    await vaultLayer.claimCoreRewards();
+    
+    // Get the vault token (vlCORE) balance of addr1.
+    const sharesAddr1 = await vaultLayer.balanceOf(addr1.address);
+    console.log("sharesAddr1:", ethers.utils.formatUnits(sharesAddr1, 18));
+    const expectedAssets = await vaultLayer.convertToAssets(sharesAddr1);
+    console.log("expectedAssets:", ethers.utils.formatUnits(expectedAssets, 18));
+    totalCoreStaked = await vaultLayer.totalCoreStaked();
+    console.log("totalCoreStaked:", ethers.utils.formatUnits(totalCoreStaked, 18));
+
+    // When addr1 calls withdrawCORE, the contract should detect that assets > contract.balance and call _unstakeCORE.
+    await vaultLayer.connect(addr1).withdrawCORE(sharesAddr1);
+
+    // Verify that the vault’s totalCoreStaked is reduced (in our test we expect it to be 0 after unstaking).
     expect(await vaultLayer.totalCoreStaked()).to.equal(0);
   });
 

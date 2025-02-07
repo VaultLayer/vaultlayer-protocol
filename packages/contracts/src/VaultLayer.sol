@@ -18,6 +18,32 @@ interface IBitcoinStake {
 }
 
 interface ICoreAgent {
+    struct CoinDelegator {
+        uint256 stakedAmount;
+        uint256 realtimeAmount;
+        uint256 transferredAmount;
+        uint256 changeRound;
+    }
+
+    struct Candidate {
+        uint256 amount;
+        uint256 realtimeAmount;
+        uint256[] continuousRewardEndRounds;
+    }
+
+    struct Delegator {
+        address[] candidates;
+        uint256 amount;
+    }
+
+    struct Reward {
+        uint256 reward;
+        uint256 accStakedAmount;
+    }
+
+    function getDelegator(address candidate, address delegator) external view returns (CoinDelegator memory);
+    function getCandidateListByDelegator(address delegator) external view returns (address[] memory);
+
     function delegateCoin(address validator, uint256 amount) external payable;
     function undelegateCoin(address validator, uint256 amount) external payable;
     function transferCoin(address sourceCandidate, address targetCandidate, uint256 amount) external;
@@ -97,6 +123,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     // Events
     event BTCStaked(bytes32 indexed txId, bytes20 indexed pubKey, uint256 amount, uint256 endRound);
     event COREDeposited(address indexed user, uint256 amount, uint256 round);
+    event COREStaked(address indexed validator, uint256 amount);
+    event COREUnstaked(address indexed candidate, uint256 amount);
     event RewardsDistributed(bytes32 indexed txId, uint256 btcReward, address indexed user, uint256 coreReward);
     event BTCRewardsClaimed(bytes20 indexed pubKey, uint256 reward);
     event RewardsClaimed(address indexed user, uint256 reward);
@@ -206,28 +234,9 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         _claimRewards();
     }
 
-    // Withdraw CORE liquidity
-    function withdrawCORE(uint256 shares) external nonReentrant {
-        require(shares > 0 && shares <= balanceOf(msg.sender), "Invalid shares");
-        require(roundTag > coreDepositRound[msg.sender], "Withdrawal locked for this round"); // Enforce 1 full round lock
-
-        // claim any pending rewards
-        _claimRewards();
-
-        uint256 assets = convertToAssets(shares);
-        require(assets <= address(this).balance, "Insufficient vault balance");
-
-        totalCoreDeposits -= assets;
-        _burn(msg.sender, shares);
-
-        payable(msg.sender).transfer(assets);
-    }
-
-
-
 
     // 1. We Record BTC Stake linked to a BTC Public Key and BTC txid
-    function recordBTCStake(bytes calldata btcTx, uint256 btcAmount, bytes memory script) external onlyRole(ADMIN_ROLE) {
+    function recordBTCStake(bytes calldata btcTx, uint256 btcAmount, bytes memory script) external nonReentrant onlyRole(ADMIN_ROLE) {
         require(btcAmount > 0, "Invalid BTC amount");
 
         bytes32 txId = BitcoinHelper.calculateTxId(btcTx);
@@ -265,7 +274,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         bytes memory signature,
         string memory message,
         address recipient
-    ) external {
+    ) external nonReentrant {
         require(BitcoinHelper.verifyEthPubKeySignature(message, signature, ethPubKey, recipient), "Invalid signature");
         
         bytes20 btcPubKeyHash = BitcoinHelper.convertEthToBtcPubKeyHash(ethPubKey);
@@ -285,20 +294,87 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
     }
 
     // Stake CORE tokens into CoreAgent
-    function stakeCORE(address validator, uint256 amount) external onlyRole(ADMIN_ROLE) {
+    function stakeCORE(address validator, uint256 amount) external nonReentrant onlyRole(ADMIN_ROLE) {
         uint256 requiredCoreForYield = (totalBTCStaked * CORE_DECIMALS) / targetRatio;
         require(totalCoreStaked <= requiredCoreForYield, "Already at required CORE staking");
+
         uint256 amountToStake = requiredCoreForYield - totalCoreStaked;
         uint256 stakeAmount = amount < amountToStake ? amount : amountToStake;
         require(stakeAmount <= address(this).balance, "Insufficient funds to stake");
-        coreAgent.delegateCoin{value: stakeAmount}(validator, stakeAmount);
-        totalCoreStaked += stakeAmount;
+
+        try coreAgent.delegateCoin{value: stakeAmount}(validator, stakeAmount) {
+
+            totalCoreStaked += stakeAmount;
+
+            emit COREStaked(validator, stakeAmount);
+
+        } catch Error(string memory reason) {
+            revert(reason);
+        } catch {
+            revert("delegateCoin failed");
+        }
+    }
+
+    // Withdraw CORE liquidity
+    function withdrawCORE(uint256 shares) external nonReentrant {
+        require(shares > 0 && shares <= balanceOf(msg.sender), "Invalid shares");
+        require(roundTag > coreDepositRound[msg.sender], "Withdrawal locked for this round"); // Enforce 1 full round lock
+
+        // claim any pending rewards
+        _claimRewards();
+
+        uint256 assets = convertToAssets(shares);
+        // Check if the vault has enough funds.
+        if (assets > address(this).balance) {
+            uint256 deficit = assets - address(this).balance;
+            _unstakeCORE(deficit);
+            require(assets <= address(this).balance, "Insufficient funds even after unstaking");
+        }
+
+        totalCoreDeposits -= assets;
+        _burn(msg.sender, shares);
+
+        payable(msg.sender).transfer(assets);
+    }
+
+    function unstakeCORE(uint256 amount) external nonReentrant onlyRole(ADMIN_ROLE) {
+        _unstakeCORE(amount);
     }
 
     // Unstake CORE tokens from CoreAgent
-    function unstakeCORE(address validator, uint256 amount) external onlyRole(ADMIN_ROLE) {
-        coreAgent.undelegateCoin(validator, amount);
-        totalCoreStaked -= amount;
+    // Internal function that loops through candidate validators until
+    // the requested amount is unstaked.
+    function _unstakeCORE(uint256 amount) internal {
+        require(amount > 0, "Invalid withdrawal amount");
+        require(totalCoreStaked >= amount, "Not enough staked CORE available");
+        address[] memory candidates;
+        try coreAgent.getCandidateListByDelegator(address(this)) returns (address[] memory _candidates) {
+            candidates = _candidates;
+        } catch {
+            revert("getCandidateListByDelegator failed");
+        }
+        uint256 remainingAmount = amount;
+
+        for (uint256 i = 0; i < candidates.length && remainingAmount > 0; i++) {
+            uint256 availableStake;
+            try coreAgent.getDelegator(candidates[i], address(this)) returns (ICoreAgent.CoinDelegator memory delegatorInfo) {
+                availableStake = delegatorInfo.realtimeAmount;
+            } catch {
+                continue;
+            }
+            if (availableStake == 0) continue;
+            uint256 unstakeAmount = availableStake >= remainingAmount ? remainingAmount : availableStake;
+            try coreAgent.undelegateCoin(candidates[i], unstakeAmount) {
+                remainingAmount -= unstakeAmount;
+                totalCoreStaked -= unstakeAmount;
+                emit COREUnstaked(candidates[i], unstakeAmount);
+            } catch Error(string memory reason) {
+                revert(reason);
+            } catch {
+                revert("undelegateCoin failed");
+            }
+        }
+        require(remainingAmount == 0, "Could not unstake enough funds");
     }
 
     // Transfer BTC delegation
@@ -309,25 +385,44 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         require(block.timestamp <= btcTx.depositTime + btcTx.lockTime, "BTC stake expired");
 
         // Call the CoreDAO BitcoinStake contract to transfer delegation
-        bitcoinStake.transfer(txId, targetCandidate);
-        
-        emit BTCDelegationTransferred(txId, targetCandidate);
+        try bitcoinStake.transfer(txId, targetCandidate) {
+            emit BTCDelegationTransferred(txId, targetCandidate);
+        } catch Error(string memory reason) {
+            revert(reason);
+        } catch {
+            revert("bitcoinStake.transfer failed");
+        }
     }
 
     // Transfer CORE stake
     function transferCOREStake(address sourceCandidate, address targetCandidate, uint256 amount) external onlyRole(ADMIN_ROLE) {
         require(totalCoreStaked >= amount, "Insufficient CORE staked");
-        coreAgent.transferCoin(sourceCandidate, targetCandidate, amount);
-        emit COREStakeTransferred(sourceCandidate, targetCandidate, amount);
+        try coreAgent.transferCoin(sourceCandidate, targetCandidate, amount) {
+            emit COREStakeTransferred(sourceCandidate, targetCandidate, amount);
+        } catch Error(string memory reason) {
+            revert(reason);
+        } catch {
+            revert("transferCoin failed");
+        }
     }
 
     // Claim CORE Rewards and distribute pending rewards
     function claimCoreRewards() external onlyRole(ADMIN_ROLE) returns (uint256) {
         uint256 currentRound = stakeHub.roundTag();
+        try stakeHub.roundTag() returns (uint256 _roundTag) {
+            currentRound = _roundTag;
+        } catch {
+            revert("roundTag() failed");
+        }
         require(currentRound > roundTag, "No new round available");
 
         // Claim CORE rewards from the stake hub
-        uint256[] memory rewards = stakeHub.claimReward();
+        uint256[] memory rewards;
+        try stakeHub.claimReward() returns (uint256[] memory _rewards) {
+            rewards = _rewards;
+        } catch {
+            revert("claimReward() failed");
+        }
         uint256 totalReward;
         for (uint256 i = 0; i < rewards.length; i++) {
             totalReward += rewards[i];
@@ -403,8 +498,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl {
         emit Rebalanced(btcRewardRatio, coreRewardRatio);
     }
 
-
-    function withdrawProtocolFees(address payable recipient) external onlyRole(ADMIN_ROLE) {
+    function withdrawProtocolFees(address payable recipient) external nonReentrant onlyRole(ADMIN_ROLE) {
         uint256 amount = pendingProtocolFees;
         require(amount > 0, "No fees to withdraw");
         pendingProtocolFees = 0;
