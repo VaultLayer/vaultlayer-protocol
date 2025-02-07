@@ -65,10 +65,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
     // Vault parameters
     uint256 constant MIN_BTC_STAKED = 1e5;   // minimal BTC stake (e.g. 0.001 BTC)
     uint256 constant MIN_CORE_STAKED = 1e20;  // minimal CORE stake (e.g. 100 CORE in wei)
-    uint256 public btcPriceInCore = 60000; // 1 BTC = 60K $CORE
     uint256 public btcRewardRatio = 5000;
     uint256 public coreRewardRatio = 5000;
-    uint256 public interestRate = 500; // 5% Interest on withdrawals
     uint256 public platformFee = 500; // Platform fee in basis points (5%)
     uint256 public reserveRatio = 200;
 
