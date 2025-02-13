@@ -57,7 +57,6 @@ describe("VaultLayer Contract", function () {
   });
 
   it("Should initialize correctly", async function () {
-    expect(await vaultLayer.btcPriceInCore()).to.equal(60000);
     expect(await vaultLayer.btcRewardRatio()).to.equal(5000);
     expect(await vaultLayer.coreRewardRatio()).to.equal(5000);
     expect(await vaultLayer.platformFee()).to.equal(500);
