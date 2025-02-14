@@ -51,7 +51,7 @@ interface ICoreAgent {
     function transferCoin(address sourceCandidate, address targetCandidate, uint256 amount) external;
 }
 
-contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
+contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
     using Address for address payable;
 
     // CoreDAO Staking Hub Contract
@@ -137,7 +137,7 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
     event PlatformFeeUpdated(uint256 newFee);
     event ReserveRatioUpdated(uint256 newRatio);    
 
-    constructor(IStakeHub _stakeHub, IBitcoinStake _bitcoinStake, ICoreAgent _coreAgent) ERC20("VaultLayer CORE Shares", "vlCORE") {
+    constructor(IStakeHub _stakeHub, IBitcoinStake _bitcoinStake, ICoreAgent _coreAgent) ERC20("Vaulter CORE", "vltCORE") {
         stakeHub = _stakeHub;
         bitcoinStake = _bitcoinStake;
         coreAgent = _coreAgent;
@@ -238,6 +238,18 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
         emit COREDeposited(msg.sender, msg.value, roundTag);
     }
 
+    // Pending Rewards for core depositor
+    function getPendingCoreRewards(
+        address depositor
+    ) public view returns (uint256) {
+        if(roundTag > lastClaimed[depositor]){
+            uint256 totalShares = balanceOf(depositor);
+            uint256 assets = convertToAssets(totalShares);
+            uint256 reward = (assets * pendingCoreRewards) / (totalCoreDeposits); // Pro-rata rewards based on total deposits
+            return convertToShares(reward);
+        } else return 0;
+    }
+
     function _claimRewards() internal {
         if(roundTag > lastClaimed[msg.sender]){
             lastClaimed[msg.sender] = roundTag;
@@ -246,8 +258,9 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
             uint256 reward = (assets * pendingCoreRewards) / (totalCoreDeposits); // Pro-rata rewards based on total deposits
             if(reward > 0 && reward <= pendingCoreRewards){
                 pendingCoreRewards -= reward;
-                _mint(msg.sender, reward);
-                emit RewardsClaimed(msg.sender, reward);
+                uint256 shares = convertToShares(reward);
+                _mint(msg.sender, shares);
+                emit RewardsClaimed(msg.sender, shares);
             }
         }
     }
@@ -257,8 +270,8 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
     }
 
 
-    // 1. We Record BTC Stake linked to a BTC Public Key and BTC txid
-    function recordBTCStake(bytes calldata btcTx, bytes memory script) external nonReentrant onlyRole(ADMIN_ROLE) {
+    // Record BTC Stake linked to a BTC Public Key and BTC txid
+    function recordBTCStake(bytes calldata btcTx, bytes memory script) external nonReentrant whenNotPaused {
         // Check that the provided btcTx contains the script bytes.
         require(BitcoinHelper.bytesContains(btcTx, script), "BTC transaction does not include provided script");
 
@@ -309,8 +322,20 @@ contract VaultLayer is ERC20, ReentrancyGuard, AccessControl, Pausable {
         stake.pendingRewards = 0;
         pendingBTCRewards -= reward;
 
-        _mint(recipient, reward);
-        emit BTCRewardsClaimed(btcPubKeyHash, reward);
+        uint256 shares = convertToShares(reward);
+        _mint(recipient, shares);
+        emit BTCRewardsClaimed(btcPubKeyHash, shares);
+    }
+
+     // Pending Rewards for the same PubKey used for ETH and BTC address derivation
+    function getPendingBTCRewards(
+        bytes memory ethPubKey
+    ) public view returns (uint256) {
+        bytes20 btcPubKeyHash = BitcoinHelper.convertEthToBtcPubKeyHash(ethPubKey);
+
+        BtcStake storage stake = btcStakes[btcPubKeyHash];
+        
+        return convertToShares(stake.pendingRewards);
     }
 
     // Stake CORE tokens into CoreAgent

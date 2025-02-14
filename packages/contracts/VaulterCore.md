@@ -1,18 +1,18 @@
-# VaultLayer CORE Shares (vlCORE) Contract
+# VaultLayer CORE Shares (vltCORE) Contract
 
 ## Overview
-VaultLayer is a decentralized protocol that unlocks liquidity and maximizes yield for Bitcoin staked on Layer 1 (L1) using Smart Vaults. The `vlCORE` contract represents tokenized shares of CORE collateral that users receive when they deposit CORE into the VaultLayer system.
+VaultLayer is a decentralized protocol that unlocks liquidity and maximizes yield for Bitcoin staked on Layer 1 (L1) using Smart Vaults. The `vltCORE` contract represents tokenized shares of CORE collateral that users receive when they deposit CORE into the VaultLayer system.
 
 ## Features
 - **Bitcoin-backed yield**: Users earn optimized staking rewards by maintaining a 1:8000 BTC-to-CORE ratio.
-- **Liquidity access**: Tokenized `vlCORE` shares can be traded, staked, or used as collateral.
+- **Liquidity access**: Tokenized `vltCORE` shares can be traded, staked, or used as collateral.
 - **Automated rebalancing**: Ensures rewards are dynamically distributed between BTC stakers and CORE depositors.
 - **Staking and delegation**: Facilitates CORE staking via CoreDAO’s staking mechanism.
 - **BTC transaction validation**: Records BTC stakes and tracks rewards through off-chain verification.
 
 ## Smart Contract Architecture
 ### Core Components
-- **ERC-20 Standard**: Implements `vlCORE` as an ERC-20 token with minting and burning functionalities.
+- **ERC-20 Standard**: Implements `vltCORE` as an ERC-20 token with minting and burning functionalities.
 - **Reentrancy Guard**: Protects against reentrancy attacks during deposits and withdrawals.
 - **Pausable**: Allows administrators to pause contract functions in case of emergency.
 - **Access Control**: Uses role-based permissions for secure governance.
@@ -33,7 +33,7 @@ Ensure you have the following installed:
 1. Clone the repository:
    ```sh
    git clone git@github.com:VaultLayer/vaultlayer-protocol.git
-   cd vlCORE
+   cd vltCORE
    ```
 2. Install dependencies:
    ```sh
@@ -51,7 +51,7 @@ Ensure you have the following installed:
 ### Deployment
 To deploy `VaultLayer` to a testnet:
 ```sh
-npx hardhat run scripts/deploy.js --network <network-name>
+npx hardhat run scripts/deployVL.js --network <network-name>
 ```
 
 ## Contract Functions
@@ -62,8 +62,8 @@ npx hardhat run scripts/deploy.js --network <network-name>
 - `pause()` / `unpause()`: Enables/disables contract interactions.
 
 ### User Functions
-- `depositCORE()`: Deposits CORE and mints `vlCORE` shares.
-- `withdrawCORE(uint256 shares)`: Burns `vlCORE` shares and withdraws CORE.
+- `depositCORE()`: Deposits CORE and mints `vltCORE` shares.
+- `withdrawCORE(uint256 shares)`: Burns `vltCORE` shares and withdraws CORE.
 - `claimRewards()`: Claims accrued rewards for the user.
 - `recordBTCStake(bytes calldata btcTx, bytes memory script)`: Registers a BTC stake and links it to a CORE delegation.
 - `claimBTCRewards(bytes memory ethPubKey, bytes memory signature, string memory message, address recipient)`: Claims BTC rewards using a signature verification mechanism.
