@@ -10,7 +10,6 @@ import "./BitcoinHelper.sol";
 
 interface IStakeHub {
     function claimReward() external returns (uint256[] memory rewards);
-    function roundTag() external view returns (uint256);
 }
 
 interface IBitcoinStake {
@@ -42,13 +41,16 @@ interface ICoreAgent {
         uint256 reward;
         uint256 accStakedAmount;
     }
+    
+    function roundTag() external view returns (uint256);
 
     function getDelegator(address candidate, address delegator) external view returns (CoinDelegator memory);
     function getCandidateListByDelegator(address delegator) external view returns (address[] memory);
 
-    function delegateCoin(address validator, uint256 amount) external payable;
-    function undelegateCoin(address validator, uint256 amount) external payable;
+    function delegateCoin(address candidate) external payable;
+    function undelegateCoin(address candidate, uint256 amount) external payable;
     function transferCoin(address sourceCandidate, address targetCandidate, uint256 amount) external;
+
 }
 
 contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
@@ -64,7 +66,7 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
 
     // Vault parameters
     uint256 constant MIN_BTC_STAKED = 1e5;   // minimal BTC stake (e.g. 0.001 BTC)
-    uint256 constant MIN_CORE_STAKED = 1e20;  // minimal CORE stake (e.g. 100 CORE in wei)
+    uint256 constant MIN_CORE_STAKED = 1e19;  // minimal CORE stake (e.g. 10 CORE in wei)
     uint256 public btcRewardRatio = 5000;
     uint256 public coreRewardRatio = 5000;
     uint256 public platformFee = 500; // Platform fee in basis points (5%)
@@ -97,6 +99,7 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
         uint256 amount;
         uint256 lockTime;
         uint256 depositTime;
+        uint256 startRound;
         uint256 endRound;
         bytes20 pubKey;
     }
@@ -239,7 +242,7 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
     }
 
     // Pending Rewards for core depositor
-    function getPendingCoreRewards(
+    function getPendingRewards(
         address depositor
     ) public view returns (uint256) {
         if(roundTag > lastClaimed[depositor]){
@@ -251,6 +254,7 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
     }
 
     function _claimRewards() internal {
+        require(roundTag > coreDepositRound[msg.sender], "Claim Rewards locked for this round");
         if(roundTag > lastClaimed[msg.sender]){
             lastClaimed[msg.sender] = roundTag;
             uint256 totalShares = balanceOf(msg.sender);
@@ -287,11 +291,11 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
         require(delegator != address(0), "BTC tx not found in receiptMap");
         require(delegator == address(this), "BTC tx does not delegate to us");
 
-        uint256 endRound = round + (lockTime / 1 days);
+        uint256 endRound = (lockTime / 1 days);
 
         (uint256 scriptLockTime, bytes20 pubKey) = BitcoinHelper.extractBitcoinAddress(script);
         require(lockTime == scriptLockTime, "BTC tx lockTime != scriptLockTime");
-        btcTxMap[txId] = BtcTx(amount, scriptLockTime, blockTimestamp, endRound, pubKey);
+        btcTxMap[txId] = BtcTx(amount, scriptLockTime, blockTimestamp, round, endRound, pubKey);
         btcTxIds.push(txId); // Track txId for iteration
 
         btcStakes[pubKey].stakedAmount += amount;
@@ -347,7 +351,7 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
         uint256 stakeAmount = amount < amountToStake ? amount : amountToStake;
         require(stakeAmount <= address(this).balance, "Insufficient funds to stake");
 
-        try coreAgent.delegateCoin{value: stakeAmount}(validator, stakeAmount) {
+        try coreAgent.delegateCoin{value: stakeAmount}(validator) {
 
             totalCoreStaked += stakeAmount;
 
@@ -451,10 +455,23 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
         }
     }
 
+    function getPendingCoreRewards() external view returns (uint256[] memory) {
+        // ABI-encoded function signature for `claimReward()`
+        bytes memory data = abi.encodeWithSignature("claimReward()");
+
+        // Perform a low-level static call
+        (bool success, bytes memory result) = address(stakeHub).staticcall(data);
+
+        require(success, "Static call of claimReward failed");
+
+        // Decode the returned data
+        return abi.decode(result, (uint256[]));
+    }
+
     // Claim CORE Rewards and distribute pending rewards
     function claimCoreRewards() external onlyRole(ADMIN_ROLE) returns (uint256) {
-        uint256 currentRound = stakeHub.roundTag();
-        try stakeHub.roundTag() returns (uint256 _roundTag) {
+        uint256 currentRound = roundTag;
+        try coreAgent.roundTag() returns (uint256 _roundTag) {
             currentRound = _roundTag;
         } catch {
             revert("roundTag() failed");
@@ -511,14 +528,14 @@ contract VaulterCore is ERC20, ReentrancyGuard, AccessControl, Pausable {
     // Dynamic Rebalancing     
     function _rebalanceRewardRatio() internal {
         if (totalBTCStaked < MIN_BTC_STAKED) {
-            btcRewardRatio = 0;
-            coreRewardRatio = 10000;
+            btcRewardRatio = 8000;
+            coreRewardRatio = 2000;
             emit Rebalanced(btcRewardRatio, coreRewardRatio);
             return;
         }
         if (totalCoreDeposits < MIN_CORE_STAKED) {
-            btcRewardRatio = 10000;
-            coreRewardRatio = 0;
+            btcRewardRatio = 2000;
+            coreRewardRatio = 8000;
             emit Rebalanced(btcRewardRatio, coreRewardRatio);
             return;
         }

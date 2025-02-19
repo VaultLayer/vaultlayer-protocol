@@ -2,6 +2,8 @@
 pragma solidity ^0.8.23;
 
 contract MockCoreAgent {
+    uint256 public roundTag;
+
     // Struct to hold delegation info.
     struct CoinDelegator {
         uint256 stakedAmount;
@@ -20,11 +22,14 @@ contract MockCoreAgent {
     // Nested mapping: candidate => delegator => CoinDelegator info.
     mapping(address => mapping(address => CoinDelegator)) public delegations;
 
+    function setRound(uint256 _round) external {
+        roundTag = _round;
+    }
+
     // Mock function to simulate staking CORE.
     // The caller (delegator) specifies a validator (candidate) and sends ETH.
-    function delegateCoin(address validator, uint256 amount) external payable {
-        require(msg.value == amount, "Incorrect ETH sent");
-        
+    function delegateCoin(address validator) external payable {
+        uint256 amount = msg.value;
         // Update totals.
         stakedAmounts[validator] += amount;
         delegatedAmounts[msg.sender] += amount;

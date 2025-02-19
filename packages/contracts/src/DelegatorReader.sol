@@ -25,6 +25,8 @@ interface ICoreAgent {
         uint256 accStakedAmount;
     }
 
+    function roundTag() external view returns (uint256);
+
     function getDelegator(address candidate, address delegator) external view returns (CoinDelegator memory);
     function getCandidateListByDelegator(address delegator) external view returns (address[] memory);
 }
@@ -99,6 +101,16 @@ contract DelegatorReader {
 
         // Decode the returned data
         return abi.decode(result, (uint256[]));
+    }
+
+    function getRound() external view returns (uint256) {
+        uint256 currentRound = 0;
+        try coreAgent.roundTag() returns (uint256 _roundTag) {
+            currentRound = _roundTag;
+        } catch {
+            revert("roundTag() failed");
+        }
+        return currentRound;
     }
 
 }

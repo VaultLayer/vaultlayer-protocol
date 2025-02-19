@@ -103,7 +103,7 @@ describe("VaulterCore Contract", function () {
     await vaulterCore.connect(addr1).depositCORE({ value: depositAmount });
     const shares = await vaulterCore.balanceOf(addr1.address); // Get the correct shares minted
 
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     // Claim the core rewards
     await vaulterCore.claimCoreRewards();
 
@@ -226,7 +226,7 @@ describe("VaulterCore Contract", function () {
     const btcStakeBefore = await vaulterCore.btcStakes(pubKey);
     console.log("btcStake pendingRewards before round:", btcStakeBefore.pendingRewards.toString());
 
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     await stakeHub.addReward(ethers.utils.parseEther("10"));  // Mock total rewards
 
     // Claim the core rewards
@@ -248,9 +248,9 @@ describe("VaulterCore Contract", function () {
     expect(initialCoreRewardRatio.toNumber()).to.equal(5000);
 
     // Deposit 10 CORE to create an imbalance (since no BTC is staked)
-    await vaulterCore.connect(addr1).depositCORE({ value: ethers.utils.parseEther("10") });
+    await vaulterCore.connect(addr1).depositCORE({ value: ethers.utils.parseEther("100") });
 
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     await stakeHub.addReward(ethers.utils.parseEther("10"));  // Mock total rewards
 
     // Claim the core rewards
@@ -264,13 +264,13 @@ describe("VaulterCore Contract", function () {
     console.log(`CORE Reward Ratio after deposit: ${updatedCoreRewardRatio.toString()}`);
 
     // Since no BTC is staked, the ratio should shift towards rewarding BTC more to incentivize BTC deposits
-    expect(updatedBtcRewardRatio.toNumber()).to.equal(0);
-    expect(updatedCoreRewardRatio.toNumber()).to.equal(10000);
+    expect(updatedBtcRewardRatio.toNumber()).to.equal(8000);
+    expect(updatedCoreRewardRatio.toNumber()).to.equal(2000);
   });
 
 
   it("Should claim CORE rewards and distribute correctly", async function () {
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     await stakeHub.addReward(ethers.utils.parseEther("10"));  // Mock total rewards: 10 ETH
 
     // Claim the core rewards
@@ -337,7 +337,7 @@ describe("VaulterCore Contract", function () {
     await vaulterCore.stakeCORE(validator, ethers.utils.parseEther("1000"));
     expect(await vaulterCore.totalCoreStaked()).to.equal(ethers.utils.parseUnits("800", 18));
 
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     // Claim the core rewards
     await vaulterCore.claimCoreRewards();
     
@@ -404,7 +404,7 @@ describe("VaulterCore Contract", function () {
     pricePerShare = await vaulterCore.getPricePerShare();
     console.log("Round 1, getPricePerShare:", ethers.utils.formatUnits(pricePerShare, 18));
 
-    await stakeHub.setRound(1);
+    await coreAgent.setRound(1);
     await stakeHub.addReward(ethers.utils.parseEther("10")); // scaled-down reward
     await vaulterCore.claimCoreRewards();
 
@@ -450,7 +450,7 @@ describe("VaulterCore Contract", function () {
     expect(await vaulterCore.totalCoreStaked()).to.equal(ethers.utils.parseEther("800"));
 
     // Process rewards for round 2.
-    await stakeHub.setRound(2);
+    await coreAgent.setRound(2);
     await stakeHub.addReward(ethers.utils.parseEther("5"));
     await vaulterCore.claimCoreRewards();
     totalAssets = await vaulterCore.totalAssets();
@@ -492,7 +492,7 @@ describe("VaulterCore Contract", function () {
     await vaulterCore.stakeCORE(addr2.address, ethers.utils.parseEther("1000"));
     expect(await vaulterCore.totalCoreStaked()).to.equal(ethers.utils.parseEther("1800"));
 
-    await stakeHub.setRound(3);
+    await coreAgent.setRound(3);
     await stakeHub.addReward(ethers.utils.parseEther("8"));
     await vaulterCore.claimCoreRewards();
     totalAssets = await vaulterCore.totalAssets();
@@ -544,7 +544,7 @@ describe("VaulterCore Contract", function () {
     await ethers.provider.send("evm_mine");
     const newBlock = await ethers.provider.getBlock("latest");
     //console.log("New block timestamp after increase:", newBlock.timestamp);
-    await stakeHub.setRound(4);
+    await coreAgent.setRound(4);
     await stakeHub.addReward(ethers.utils.parseEther("20"));
     const txClaim4 = await vaulterCore.claimCoreRewards();
     const receiptClaim4 = await txClaim4.wait();
@@ -604,7 +604,7 @@ describe("VaulterCore Contract", function () {
     const finalBalanceAddr1 = await ethers.provider.getBalance(addr1.address);
     console.log("Round 5, addr1 balance increased: ", ethers.utils.formatUnits(finalBalanceAddr1.sub(initialBalanceAddr1), 18));
 
-    await stakeHub.setRound(5);
+    await coreAgent.setRound(5);
     const txClaim5 = await vaulterCore.claimCoreRewards();
     totalAssets = await vaulterCore.totalAssets();
     pricePerShare = await vaulterCore.getPricePerShare();
@@ -649,7 +649,7 @@ describe("VaulterCore Contract", function () {
     let balanceAfter = await vaulterCore.balanceOf(recipient);
     console.log("Round 6, recipient balanceAfter:", ethers.utils.formatUnits(balanceAfter, 18));
 
-    await stakeHub.setRound(6);
+    await coreAgent.setRound(6);
     await stakeHub.addReward(ethers.utils.parseEther("10"));
     await vaulterCore.claimCoreRewards();
 

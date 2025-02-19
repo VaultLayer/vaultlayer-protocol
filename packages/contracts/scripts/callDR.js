@@ -5,7 +5,7 @@ async function main() {
     console.log("Calling contract with the account:", caller.address);
 
     // Replace with the deployed DelegatorReader contract address
-    const DelegatorReaderAddress = "0x5B476379Da65617Af30489354e600dEf81Ef5fEF";
+    const DelegatorReaderAddress = "0x1AD38d8F0619434A0f0dc26DF6683Fa351d91fc8";
 
     const DelegatorReader = await ethers.getContractAt("DelegatorReader", DelegatorReaderAddress);
 
@@ -34,6 +34,10 @@ async function main() {
     */
 
     try {
+
+        const round = await DelegatorReader.getRound();
+        console.log("round:", round);
+
         const stakeHubAddress = "0x0000000000000000000000000000000000001010";
         // Call the simulateClaimReward function on the DelegatorReader contract
         const rewards = await DelegatorReader.simulateClaimReward(stakeHubAddress);
